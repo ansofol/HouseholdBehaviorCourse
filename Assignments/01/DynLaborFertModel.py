@@ -282,5 +282,44 @@ class DynLaborFertModelClass(EconModelClass):
                         birth = 1
                     sim.n[i,t+1] = sim.n[i,t] + birth
                     
+    
+    def simulate_tau(self, tau, shock_model):
+        """ Simulate from period tau and onwards using policy functions from shock_model
+        - used to compute age specific Marshall elasticities """
+
+        sol = shock_model.sol
+        par = shock_model.par
+
+        sim = self.sim
+
+        # b. loop over individuals and time
+        for i in range(self.par.simN):
+
+            # i. initialize states
+            #sim.n[i,0] = sim.n_init[i]
+            #sim.a[i,0] = sim.a_init[i]
+            #sim.k[i,0] = sim.k_init[i]
+
+            for t in range(tau, par.simT):
+
+                # ii. interpolate optimal consumption and hours
+                idx_sol = (t,sim.n[i,t])
+                sim.c[i,t] = interp_2d(par.a_grid,par.k_grid,sol.c[idx_sol],sim.a[i,t],sim.k[i,t])
+                sim.h[i,t] = interp_2d(par.a_grid,par.k_grid,sol.h[idx_sol],sim.a[i,t],sim.k[i,t])
+
+                # iii. store next-period states
+                if t<par.simT-1:
+                    income = self.wage_func(sim.k[i,t],t)*sim.h[i,t]
+                    spouse_income = par.y0 + par.y1*t
+                    childcare = sim.n[i,t]*par.c_cost
+                    sim.a[i,t+1] = (1+par.r)*(sim.a[i,t] + income + spouse_income - childcare - sim.c[i,t])
+                    sim.k[i,t+1] = sim.k[i,t] + sim.h[i,t]
+
+                    birth = 0 
+                    if ((sim.draws_uniform[i,t] <= par.p_birth) & (sim.n[i,t]<(par.Nn-1))):
+                        birth = 1
+                    sim.n[i,t+1] = sim.n[i,t] + birth
+                    
+
 
 
