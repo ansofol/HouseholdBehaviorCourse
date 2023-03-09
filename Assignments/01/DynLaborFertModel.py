@@ -38,6 +38,7 @@ class DynLaborFertModelClass(EconModelClass):
 
         # children
         par.p_birth = 0.1
+        par.c_cost = 0
 
         # spouse
         par.y0 = 0. # constant
@@ -131,8 +132,8 @@ class DynLaborFertModelClass(EconModelClass):
                         if t==par.T-1: # last period
                             obj = lambda x: self.obj_last(x[0],assets,capital,kids)
 
-                            constr = lambda x: self.cons_last(x[0],assets,capital)
-                            nlc = NonlinearConstraint(constr, lb=0.0, ub=np.inf,keep_feasible=True)
+                            constr = lambda x: self.cons_last(x[0],assets,capital,kids)
+                            nlc = NonlinearConstraint(constr, lb=0.0, ub=np.inf,keep_feasible=False)
 
                             # call optimizer
                             hours_min = - assets / self.wage_func(capital,t) + 1.0e-5 # minimum amout of hours that ensures positive consumption
@@ -142,7 +143,7 @@ class DynLaborFertModelClass(EconModelClass):
                             res = minimize(obj,init_h,bounds=((0.0,np.inf),),constraints=nlc,method='trust-constr')
 
                             # store results
-                            sol.c[idx] = self.cons_last(res.x[0],assets,capital)
+                            sol.c[idx] = self.cons_last(res.x[0],assets,capital,kids)
                             sol.h[idx] = res.x[0]
                             sol.V[idx] = -res.fun
 
@@ -171,16 +172,17 @@ class DynLaborFertModelClass(EconModelClass):
                             sol.V[idx] = -res.fun
 
     # last period
-    def cons_last(self,hours,assets,capital):
+    def cons_last(self,hours,assets,capital, kids):
         par = self.par
 
         income = self.wage_func(capital,par.T-1) * hours
         spouse_income = par.y0 + par.y1*(par.T-1)
-        cons = assets + income + spouse_income
+        childcare = kids*par.c_cost
+        cons = assets + income + spouse_income - childcare
         return cons
 
     def obj_last(self,hours,assets,capital,kids):
-        cons = self.cons_last(hours,assets,capital)
+        cons = self.cons_last(hours,assets,capital,kids)
         return - self.util(cons,hours,kids)    
 
     # earlier periods
@@ -205,7 +207,8 @@ class DynLaborFertModelClass(EconModelClass):
         # d. *expected* continuation value from savings
         income = self.wage_func(capital,t) * hours
         spouse_income = par.y0 + par.y1*t
-        a_next = (1.0+par.r)*(assets + income + spouse_income - cons)
+        childcare = kids*par.c_cost
+        a_next = (1.0+par.r)*(assets + income + spouse_income - childcare - cons)
         k_next = capital + hours
 
         # no birth
@@ -270,7 +273,8 @@ class DynLaborFertModelClass(EconModelClass):
                 if t<par.simT-1:
                     income = self.wage_func(sim.k[i,t],t)*sim.h[i,t]
                     spouse_income = par.y0 + par.y1*t
-                    sim.a[i,t+1] = (1+par.r)*(sim.a[i,t] + income + spouse_income - sim.c[i,t])
+                    childcare = sim.n[i,t]*par.c_cost
+                    sim.a[i,t+1] = (1+par.r)*(sim.a[i,t] + income + spouse_income - childcare - sim.c[i,t])
                     sim.k[i,t+1] = sim.k[i,t] + sim.h[i,t]
 
                     birth = 0 
