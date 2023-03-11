@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import minimize,  NonlinearConstraint
+from scipy.optimize import minimize,  NonlinearConstraint, root_scalar
 import warnings
 warnings.filterwarnings("ignore", message="delta_grad == 0.0. Check if the approximated function is linear.") # turn of annoying warning
 
@@ -24,7 +24,7 @@ class DynLaborFertModelClass(EconModelClass):
         par.T = 10 # time periods
         
         # preferences
-        par.rho = 0.98 # discount factor
+        par.rho = 1/1.02 # discount factor
 
         par.beta_0 = 0.1 # weight on labor dis-utility (constant)
         par.beta_1 = 0.05 # additional weight on labor dis-utility (children)
@@ -32,7 +32,7 @@ class DynLaborFertModelClass(EconModelClass):
         par.gamma = 2.5 # curvature on labor hours 
 
         # income
-        par.alpha = 0.1 # human capital accumulation 
+        par.alpha = 0.3 # human capital accumulation 
         par.w = 1.0 # wage base level
         par.tau = 0.1 # labor income tax
 
@@ -52,16 +52,19 @@ class DynLaborFertModelClass(EconModelClass):
         # grids
         par.a_max = 5.0 # maximum point in wealth grid
         par.a_min = -10.0 # minimum point in wealth grid
-        par.Na = 50 #70 # number of grid points in wealth grid 
+        par.Na = 5 #70 # number of grid points in wealth grid 
         
         par.k_max = 20.0 # maximum point in wealth grid
-        par.Nk = 20 #30 # number of grid points in wealth grid    
+        par.Nk = 5 #30 # number of grid points in wealth grid    
 
         par.Nn = 2 # number of children
 
         # simulation
         par.simT = par.T # number of periods
         par.simN = 1_000 # number of individuals
+
+        # estimate beta_1
+        par.target_drop_y0 = -0.1
 
 
     def allocate(self):
@@ -88,6 +91,7 @@ class DynLaborFertModelClass(EconModelClass):
         sol.c = np.nan + np.zeros(shape)
         sol.h = np.nan + np.zeros(shape)
         sol.V = np.nan + np.zeros(shape)
+        sol.solved = False # keep track of whether the model has been solved
 
         # e. simulation arrays
         shape = (par.simN,par.simT)
@@ -116,7 +120,7 @@ class DynLaborFertModelClass(EconModelClass):
 
     ############
     # Solution #
-    def solve(self):
+    def solve(self, do_print=False):
 
         # a. unpack
         par = self.par
@@ -126,9 +130,10 @@ class DynLaborFertModelClass(EconModelClass):
         
         # c. loop backwards (over all periods)
         for t in reversed(range(par.T)):
+            if do_print:
+                print(f'solving period {t}...')
             for i_s, spouse in enumerate(par.spousegrid):
                 if spouse == 0 and par.p_spouse == 1:
-                    print('passing')
                     pass # no need to evaluate if there is always a spouse
                 else:
                     # i. loop over state variables: number of children, human capital and wealth in beginning of period
@@ -180,6 +185,9 @@ class DynLaborFertModelClass(EconModelClass):
                                     sol.c[idx] = res.x[0]
                                     sol.h[idx] = res.x[1]
                                     sol.V[idx] = -res.fun
+        sol.solved = True
+        if do_print:
+            print('Model solved\n')
 
     # last period
     def cons_last(self,hours,assets,capital,spouse,kids):
@@ -243,7 +251,7 @@ class DynLaborFertModelClass(EconModelClass):
         # no spouse
         kids_next = kids
         V_next = sol.V[t+1,0,kids_next]
-        V_next_no_spouse = interp_2d(par.a_grid,par.k_grid,V_next,a_next,k_next)
+        V_next_no_spouse = interp_2d(par.a_grid,par.k_grid,V_next,a_next,k_next) if par.p_spouse !=1 else 0 # will be nan if p_spouse == 1 bc value func  has not been computed
 
         # Total
         EV_next = par.p_spouse*EV_next_spouse + (1-par.p_spouse)*V_next_no_spouse
@@ -343,6 +351,54 @@ class DynLaborFertModelClass(EconModelClass):
                         if ((sim.draws_uniform[i,t] <= par.p_birth) & (sim.n[i,t]<(par.Nn-1))):
                             birth = 1
                     sim.n[i,t+1] = sim.n[i,t] + birth
+
+
+
+###################
+#   Estimation    #
+###################
+
+    def est_moment(self,beta_1, do_print=False):
+
+        par = self.par
+        sim = self.sim
+        sol = self.sol
+
+        par.beta_1 = beta_1
+
+        self.solve(do_print=do_print)
+        self.simulate()
+
+        # compute moment
+        birth = np.zeros(sim.n.shape,dtype=np.int_)
+        birth[:,1:] = (sim.n[:,1:] - sim.n[:,:-1]) > 0
+
+        # time since birth
+        periods = np.tile([t for t in range(par.simT)],(par.simN,1))
+        time_of_birth = np.max(periods * birth, axis=1)
+
+        I = time_of_birth>0
+        time_of_birth[~I] = -1000 # never as a child
+        time_of_birth = np.transpose(np.tile(time_of_birth , (par.simT,1)))
+        time_since_birth = periods - time_of_birth
+
+        # compute drop in hours in birth year
+        drop_y0 = np.mean(sim.h[time_since_birth==0]/sim.h[time_since_birth == -1]) -1
+
+        return drop_y0 
+    
+
+    def estimate(self, do_print=False, disp=True, **kwargs):
+
+        par = self.par
+
+        # define objective function and find root   
+        obj = lambda beta: self.est_moment(beta,do_print=do_print) - par.target_drop_y0
+        res = root_scalar(obj, **kwargs)
+        assert res.converged
+        
+        if disp:
+            print(res) # root is storedin par.beta_1
                     
 
 
