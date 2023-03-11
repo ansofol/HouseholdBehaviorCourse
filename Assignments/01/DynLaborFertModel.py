@@ -127,56 +127,59 @@ class DynLaborFertModelClass(EconModelClass):
         # c. loop backwards (over all periods)
         for t in reversed(range(par.T)):
             for i_s, spouse in enumerate(par.spousegrid):
+                if spouse == 0 and par.p_spouse == 1:
+                    print('passing')
+                    pass # no need to evaluate if there is always a spouse
+                else:
+                    # i. loop over state variables: number of children, human capital and wealth in beginning of period
+                    for i_n,kids in enumerate(par.n_grid):
+                        for i_a,assets in enumerate(par.a_grid):
+                            for i_k,capital in enumerate(par.k_grid):
+                                idx = (t,i_s,i_n,i_a,i_k)
 
-                # i. loop over state variables: number of children, human capital and wealth in beginning of period
-                for i_n,kids in enumerate(par.n_grid):
-                    for i_a,assets in enumerate(par.a_grid):
-                        for i_k,capital in enumerate(par.k_grid):
-                            idx = (t,i_s,i_n,i_a,i_k)
+                                # ii. find optimal consumption and hours at this level of wealth in this period t.
 
-                            # ii. find optimal consumption and hours at this level of wealth in this period t.
+                                if t==par.T-1: # last period
+                                    obj = lambda x: self.obj_last(x[0],assets,capital,spouse,kids)
 
-                            if t==par.T-1: # last period
-                                obj = lambda x: self.obj_last(x[0],assets,capital,spouse,kids)
+                                    constr = lambda x: self.cons_last(x[0],assets,capital,spouse,kids)
+                                    nlc = NonlinearConstraint(constr, lb=0.0, ub=np.inf,keep_feasible=False)
 
-                                constr = lambda x: self.cons_last(x[0],assets,capital,spouse,kids)
-                                nlc = NonlinearConstraint(constr, lb=0.0, ub=np.inf,keep_feasible=False)
+                                    # call optimizer
+                                    hours_min = - assets / self.wage_func(capital,t) + 1.0e-5 # minimum amout of hours that ensures positive consumption
+                                    hours_min = np.maximum(hours_min,2.0)
+                                    init_h = np.array([hours_min]) if i_a==0 else np.array([sol.h[t,i_s,i_n,i_a-1,i_k]]) # initial guess on optimal hours
 
-                                # call optimizer
-                                hours_min = - assets / self.wage_func(capital,t) + 1.0e-5 # minimum amout of hours that ensures positive consumption
-                                hours_min = np.maximum(hours_min,2.0)
-                                init_h = np.array([hours_min]) if i_a==0 else np.array([sol.h[t,i_s,i_n,i_a-1,i_k]]) # initial guess on optimal hours
+                                    res = minimize(obj,init_h,bounds=((0.0,np.inf),),constraints=nlc,method='trust-constr')
 
-                                res = minimize(obj,init_h,bounds=((0.0,np.inf),),constraints=nlc,method='trust-constr')
+                                    # store results
+                                    sol.c[idx] = self.cons_last(res.x[0],assets,capital,spouse,kids)
+                                    sol.h[idx] = res.x[0]
+                                    sol.V[idx] = -res.fun
 
-                                # store results
-                                sol.c[idx] = self.cons_last(res.x[0],assets,capital,spouse,kids)
-                                sol.h[idx] = res.x[0]
-                                sol.V[idx] = -res.fun
+                                else:
+                                    
+                                    # objective function: negative since we minimize
+                                    obj = lambda x: - self.value_of_choice(x[0],x[1],assets,capital,spouse,kids,t)  
 
-                            else:
+                                    # bounds on consumption 
+                                    lb_c = 0.000001 # avoid dividing with zero
+                                    ub_c = np.inf
+
+                                    # bounds on hours
+                                    lb_h = 0.0
+                                    ub_h = np.inf 
+
+                                    bounds = ((lb_c,ub_c),(lb_h,ub_h))
+                        
+                                    # call optimizer
+                                    init = np.array([lb_c,1.0]) if (i_n == 0 & i_a==0 & i_k==0) else res.x  # initial guess on optimal consumption and hours
+                                    res = minimize(obj,init,bounds=bounds,method='L-BFGS-B') 
                                 
-                                # objective function: negative since we minimize
-                                obj = lambda x: - self.value_of_choice(x[0],x[1],assets,capital,spouse,kids,t)  
-
-                                # bounds on consumption 
-                                lb_c = 0.000001 # avoid dividing with zero
-                                ub_c = np.inf
-
-                                # bounds on hours
-                                lb_h = 0.0
-                                ub_h = np.inf 
-
-                                bounds = ((lb_c,ub_c),(lb_h,ub_h))
-                    
-                                # call optimizer
-                                init = np.array([lb_c,1.0]) if (i_n == 0 & i_a==0 & i_k==0) else res.x  # initial guess on optimal consumption and hours
-                                res = minimize(obj,init,bounds=bounds,method='L-BFGS-B') 
-                            
-                                # store results
-                                sol.c[idx] = res.x[0]
-                                sol.h[idx] = res.x[1]
-                                sol.V[idx] = -res.fun
+                                    # store results
+                                    sol.c[idx] = res.x[0]
+                                    sol.h[idx] = res.x[1]
+                                    sol.V[idx] = -res.fun
 
     # last period
     def cons_last(self,hours,assets,capital,spouse,kids):
