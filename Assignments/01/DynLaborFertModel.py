@@ -50,9 +50,9 @@ class DynLaborFertModelClass(EconModelClass):
         par.r = 0.02 # interest rate
 
         # grids
-        par.a_max = 5.0 # maximum point in wealth grid
+        par.a_max = 10.0 # maximum point in wealth grid
         par.a_min = -10.0 # minimum point in wealth grid
-        par.Na = 70 #70 # number of grid points in wealth grid 
+        par.Na = 100 #70 # number of grid points in wealth grid 
         
         par.k_max = 20.0 # maximum point in wealth grid
         par.Nk = 30 #30 # number of grid points in wealth grid    
@@ -235,8 +235,6 @@ class DynLaborFertModelClass(EconModelClass):
         kids_next = kids
         V_next = sol.V[t+1,1,kids_next]
         V_next_no_birth = interp_2d(par.a_grid,par.k_grid,V_next,a_next,k_next)
-        #interpolater = interpolate.interp2d(par.a_grid, par.k_grid, V_next.T, kind='cubic')
-        #V_next_no_birth = interpolater(a_next,k_next)
 
         ## birth
         if (kids>=(par.Nn-1)):
@@ -247,8 +245,6 @@ class DynLaborFertModelClass(EconModelClass):
             kids_next = kids + 1
             V_next = sol.V[t+1,1,kids_next]
             V_next_birth = interp_2d(par.a_grid,par.k_grid,V_next,a_next,k_next)
-            #interpolater = interpolate.interp2d(par.a_grid, par.k_grid, V_next.T, kind='cubic')
-            #V_next_birth = interpolater(a_next, k_next)
 
         EV_next_spouse = par.p_birth * V_next_birth + (1-par.p_birth)*V_next_no_birth
 
@@ -256,8 +252,6 @@ class DynLaborFertModelClass(EconModelClass):
         kids_next = kids
         V_next = sol.V[t+1,0,kids_next]
         V_next_no_spouse = interp_2d(par.a_grid,par.k_grid,V_next,a_next,k_next) if par.p_spouse !=1 else 0 # will be nan if p_spouse == 1 bc value func  has not been computed
-        #interpolater = interpolate.interp2d(par.a_grid, par.k_grid, V_next.T, kind='cubic')
-        #V_next_no_spouse = interpolater(a_next,k_next) if par.p_spouse !=1 else 0
 
         # Total
         EV_next = par.p_spouse*EV_next_spouse + (1-par.p_spouse)*V_next_no_spouse
@@ -389,7 +383,7 @@ class DynLaborFertModelClass(EconModelClass):
         time_since_birth = periods - time_of_birth
 
         # compute drop in hours in birth year
-        drop_y0 = np.mean(sim.h[time_since_birth==0]/sim.h[time_since_birth == -1]) -1
+        drop_y0 = np.mean(sim.h[time_since_birth==0])/np.mean(sim.h[time_since_birth == -1]) -1
 
         return drop_y0 
     
