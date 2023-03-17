@@ -359,6 +359,7 @@ class DynLaborFertModelClass(EconModelClass):
 ###################
 
     def est_moment(self,beta_1, do_print=False):
+        """ computes relative drop in labor hours upon child birth - used for estimation """
 
         par = self.par
         sim = self.sim
@@ -389,6 +390,7 @@ class DynLaborFertModelClass(EconModelClass):
     
 
     def estimate(self, do_print=False, disp=True, **kwargs):
+        """estimates beta_1 to match target par.drop_y0"""
 
         par = self.par
 
@@ -406,7 +408,9 @@ class DynLaborFertModelClass(EconModelClass):
 # Solving or loading model        #
 ###################################
 
-def get_model_solution(name, load, save, par, tax=1):
+def get_model_solution(name, load, save, par):
+    """Solves or loads model and simulates."""
+
     model = DynLaborFertModelClass(name=name, load=load, par=par)
     
     if model.sol.solved == False:
@@ -425,6 +429,7 @@ def get_model_solution(name, load, save, par, tax=1):
 ###################################
 
 def marshall_age(model, shock_model):
+    """Computes age specific Marshall elasticities for entire simulated population. """
 
     marshall_vec = np.empty(model.par.simT)
     model_sim = model.copy() #extra model for performing simulations
@@ -439,6 +444,7 @@ def marshall_age(model, shock_model):
 
 
 def marshall_age_birth(model, shock_model, time):
+    """computes age specific Marshall elasticities conditional on giving birth at age time"""
 
     sim = model.sim
     par = model.par
