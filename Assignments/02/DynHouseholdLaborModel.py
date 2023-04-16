@@ -21,6 +21,8 @@ class DynHouseholdLaborModelClass(EconModelClass):
         # unpack
         par = self.par
 
+        par.lecture_model = False # utility as in lecture 
+
         par.T = 10 # time periods
         
         # preferences
@@ -30,6 +32,7 @@ class DynHouseholdLaborModelClass(EconModelClass):
         par.rho_2 = 0.05 # weight on labor dis-utility of women
         par.eta = -1.5 # CRRA coefficient
         par.gamma = 2.5 # curvature on labor hours 
+        par.mu = 0.5 # weight on spouse 1 in utility function
 
         # income
         par.wage_const_1 = np.log(10_000.0) # constant, men
@@ -39,9 +42,14 @@ class DynHouseholdLaborModelClass(EconModelClass):
 
         par.delta = 0.1 # depreciation in human capital
 
+        par.a = 0 # extra assets in first period for welfare analysis
+
         # taxes
         par.tax_scale = 2.278029 # from Borella et al. (2023), singles: 1.765038
         par.tax_pow = 0.0861765 # from Borella et al. (2023), singles: 0.0646416
+
+        par.tax_scale_s = 1.765038
+        par.tax_pow_s = 0.0646416
 
         # grids        
         par.k_max = 20.0 # maximum point in wealth grid
@@ -85,8 +93,11 @@ class DynHouseholdLaborModelClass(EconModelClass):
         sim.income2 = np.nan + np.zeros(shape)
 
         # g. initialization
-        sim.k1_init = np.zeros(par.simN)
+        sim.k1_init = np.zeros(par.simN) + 2
         sim.k2_init = np.zeros(par.simN)
+
+
+
 
 
     ############
@@ -109,10 +120,10 @@ class DynHouseholdLaborModelClass(EconModelClass):
                     
                     # ii. find optimal consumption and hours at this level of wealth in this period t.
                     if t==(par.T-1): # last period
-                        obj = lambda x: -self.util(x[0],x[1],capital1,capital2)
+                        obj = lambda x: -self.util(x[0],x[1],capital1,capital2,t)
 
                     else:
-                        obj = lambda x: - self.value_of_choice(x[0],x[1],capital1,capital2,sol.V[t+1])  
+                        obj = lambda x: - self.value_of_choice(x[0],x[1],capital1,capital2,sol.V[t+1],t)  
 
                     # call optimizer
                     bounds = [(0,np.inf) for i in range(2)]
@@ -131,13 +142,13 @@ class DynHouseholdLaborModelClass(EconModelClass):
                     sol.V[idx] = -res.fun
  
 
-    def value_of_choice(self,hours1,hours2,capital1,capital2,V_next):
+    def value_of_choice(self,hours1,hours2,capital1,capital2,V_next, t):
 
         # a. unpack
         par = self.par
 
         # b. current utility
-        util = self.util(hours1,hours2,capital1,capital2)
+        util = self.util(hours1,hours2,capital1,capital2, t)
         
         # c. continuation value
         k1_next = (1.0-par.delta)*capital1 + hours1
@@ -154,7 +165,7 @@ class DynHouseholdLaborModelClass(EconModelClass):
 
         income1 = self.wage_func(capital1,1) * hours1
         income2 = self.wage_func(capital2,2) * hours2
-        income_hh = income1+income2
+        income_hh = income1+income2 + par.a
 
         if par.joint_tax:
             tax_hh = self.tax_func(income_hh)
@@ -178,20 +189,32 @@ class DynHouseholdLaborModelClass(EconModelClass):
     def tax_func(self,income):
         par = self.par
 
-        rate = 1.0 - par.tax_scale*(income**(-par.tax_pow))
+        if par.joint_tax:
+            rate = 1.0 - par.tax_scale*(income**(-par.tax_pow))
+        else: 
+            rate = 1.0 - par.tax_scale_s*(income**(-par.tax_pow_s))
+
         return rate*income
 
-    def util(self,hours1,hours2,capital1,capital2):
+    def util(self,hours1,hours2,capital1,capital2, t):
         par = self.par
 
         cons = self.consumption(hours1,hours2,capital1,capital2)
 
-        util_cons = 2*(cons/2)**(1.0+par.eta) / (1.0+par.eta)
+        if t == 0:
+            cons += par.a
+
+        util_cons = (cons/2)**(1.0+par.eta) / (1.0+par.eta)
         util_hours1 = par.rho_1*(hours1)**(1.0+par.gamma) / (1.0+par.gamma)
         util_hours2 = par.rho_2*(hours2)**(1.0+par.gamma) / (1.0+par.gamma)
 
-        return util_cons - util_hours1 - util_hours2
+        if par.lecture_model:
+            return 2*util_cons - util_hours1 - util_hours2
+        else:
+            return util_cons - par.mu*util_hours1 - (1-par.mu)*util_hours2
+        
 
+    
     ##############
     # Simulation #
     def simulate(self):
@@ -223,6 +246,38 @@ class DynHouseholdLaborModelClass(EconModelClass):
                 if t<par.simT-1:
                     sim.k1[i,t+1] = (1.0-par.delta)*sim.k1[i,t] + sim.h1[i,t]
                     sim.k2[i,t+1] = (1.0-par.delta)*sim.k2[i,t] + sim.h2[i,t]
-                    
+
+        # Government budget    
+        # check tax_func
+        if par.joint_tax:          
+            sim.T = self.tax_func(sim.income1 + sim.income2)
+        else:
+            sim.T = self.tax_func(sim.income1) + self.tax_func(sim.income2)
+        
+
+
+    ################
+    # Taxation     #
+
+    def gov_budget_change(self, lambda_priv):
+
+        par = self.par
+        assert par.joint_tax, 'baseline model must have joint taxation'
+
+        # Model with individual taxation 
+        model_single = self.copy()
+        model_single.par.joint_tax = False
+        model_single.par.tax_scale_s=lambda_priv
+        model_single.solve()
+        model_single.simulate()
+
+        # Compute lifetime change in gov budget
+        surplus = (self.sim.T - model_single.sim.T).sum()/self.sim.T.sum()
+        return surplus
+
+
+
+
+
 
 
